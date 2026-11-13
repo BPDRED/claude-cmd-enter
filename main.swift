@@ -48,6 +48,10 @@ final class Helper: NSObject, NSMenuDelegate {
                      NSWorkspace.didTerminateApplicationNotification] {
             center.addObserver(self, selector: #selector(appOpenedOrQuit(_:)), name: name, object: nil)
         }
+        // The menu bar item is made once, here, and then only shown or hidden.
+        // (Removing it and making a new one each time Claude opens made macOS
+        // sometimes give the new one zero width, so it was invisible.)
+        createMenuBarItem()
         // Claude may already be open when we start.
         claudeRunning = !NSRunningApplication
             .runningApplications(withBundleIdentifier: claudeBundleID).isEmpty
@@ -62,6 +66,16 @@ final class Helper: NSObject, NSMenuDelegate {
             .runningApplications(withBundleIdentifier: claudeBundleID)
             .contains { !$0.isTerminated && !(quit && $0 == app) }
         refresh()
+        // Claude adds its own menu bar icon while it starts. Check ours again a
+        // little later, once the menu bar has settled.
+        if !quit {
+            for delay in [1.5, 4.0] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.refresh()
+                    self?.fixInvisibleMenuBarItem()
+                }
+            }
+        }
     }
 
     /// The single place that decides what should exist right now:
@@ -160,9 +174,13 @@ final class Helper: NSObject, NSMenuDelegate {
 
     // MARK: - Menu bar
 
-    func showMenuBarItem(trusted: Bool) {
+    /// Makes the menu bar item once, hidden. showMenuBarItem/removeMenuBarItem
+    /// only switch it on and off after that.
+    func createMenuBarItem() {
         if statusItem == nil {
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            item.autosaveName = "ClaudeCmdEnterItem"
+            item.isVisible = false
             let menu = NSMenu()
             menu.delegate = self
             menu.autoenablesItems = false
@@ -180,6 +198,10 @@ final class Helper: NSObject, NSMenuDelegate {
             item.menu = menu
             statusItem = item
         }
+    }
+
+    func showMenuBarItem(trusted: Bool) {
+        createMenuBarItem()
         let working = tap != nil
         // Icon:  ⌘↩ = On and working,  ⌘↩ off (grey) = Off,  ⌘↩ ⚠︎ = On but no permission.
         statusItem?.button?.title = !enabled ? "⌘↩ off" : (working ? "⌘↩" : "⌘↩ ⚠︎")
@@ -190,12 +212,21 @@ final class Helper: NSObject, NSMenuDelegate {
         permissionItem.title = !trusted ? "Accessibility permission: NOT granted"
             : (enabled && !working ? "Permission is on but not working: remove it and add it again"
                                    : "Accessibility permission: granted")
+        if statusItem?.isVisible == false { statusItem?.isVisible = true }
     }
 
+    /// Hides the item (it is not deleted, so it comes back reliably).
     func removeMenuBarItem() {
-        guard let item = statusItem else { return }
-        NSStatusBar.system.removeStatusItem(item)
-        statusItem = nil
+        if statusItem?.isVisible == true { statusItem?.isVisible = false }
+    }
+
+    /// If macOS shows the item with zero width (invisible), hide and show it again.
+    func fixInvisibleMenuBarItem() {
+        guard claudeRunning, let item = statusItem, item.isVisible,
+              (item.button?.window?.frame.width ?? 0) < 1 else { return }
+        NSLog("ClaudeCmdEnter: menu bar item had zero width, showing it again")
+        item.isVisible = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { item.isVisible = true }
     }
 
     /// Refresh the texts each time the menu is opened (the permission may have changed).

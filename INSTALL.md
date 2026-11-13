@@ -179,6 +179,13 @@ not see it, the helper is not running (maybe you chose Quit). Start it:
 launchctl kickstart gui/$UID/local.claudecmdenter
 ```
 
+If the helper is running but the item is invisible (this used to happen when
+Claude was reopened), restart the helper; `-k` stops the running copy first:
+
+```bash
+launchctl kickstart -k gui/$UID/local.claudecmdenter
+```
+
 On a MacBook with a notch, a full menu bar can also hide items. Close some
 other menu bar apps to check.
 
