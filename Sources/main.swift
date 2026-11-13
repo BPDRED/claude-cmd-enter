@@ -5,20 +5,23 @@
 //
 // What this program does, and nothing more:
 //   * It waits, doing nothing, until the Claude app is opened.
-//   * While Claude is running (and the swap is On) it holds a keyboard hook
+//   * While Claude is running (and "⌘ Command + Enter to send" is on) it holds a keyboard hook
 //     (macOS calls it an "event tap"). The hook only asks one question about
 //     each key press: "is this the Return/Enter key, and is Claude in front?"
 //   * When Claude quits, the hook and the menu bar item are removed.
 //
 // It never stores, prints or sends any key. There is no network code.
-// The only thing it saves is the On/Off choice (in UserDefaults).
+// The only thing it saves is which send key you chose (in UserDefaults).
+//
+// Other files: Sources/Icons.swift (the drawings), Sources/MenuRows.swift (the
+// switch rows), tools/make_icon.swift (draws the app icon at build time only).
 
 import AppKit
 
 let claudeBundleID = "com.anthropic.claudefordesktop"
 let returnKey: Int64 = 36          // the main Return key
 let keypadEnterKey: Int64 = 76     // Enter on the number pad (or fn+Return)
-let enabledKey = "swapEnabled"     // name of the saved On/Off setting
+let enabledKey = "swapEnabled"     // name of the saved send-key setting
 let accessibilityPane = URL(string:
     "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
 
@@ -28,11 +31,13 @@ final class Helper: NSObject, NSMenuDelegate {
     var tap: CFMachPort?               // the keyboard hook; nil = no keyboard access at all
     var tapSource: CFRunLoopSource?
     var retryTimer: Timer?             // runs only while we wait for the permission
-    var statusItem: NSStatusItem?      // the menu bar item; nil while Claude is closed
-    let toggleItem = NSMenuItem(title: "", action: #selector(toggleSwap), keyEquivalent: "")
-    let permissionItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    var statusItem: NSStatusItem?      // the menu bar item, made once, shown only while Claude is open
+    var cmdRow: SwitchRow!             // "⌘ Command + Enter to send" switch
+    var enterRow: SwitchRow!           // "Enter to send" switch (the two are a pair)
+    var accessRow: InfoRow!            // Accessibility: Granted / Not granted
 
-    /// The On/Off choice, remembered between launches.
+    /// The send-key choice, remembered between launches.
+    /// true = "⌘ Command + Enter to send", false = "Enter to send" (no keyboard hook).
     var enabled: Bool {
         get { UserDefaults.standard.bool(forKey: enabledKey) }
         set { UserDefaults.standard.set(newValue, forKey: enabledKey) }
@@ -41,7 +46,7 @@ final class Helper: NSObject, NSMenuDelegate {
     // MARK: - Watching for Claude
 
     func start() {
-        UserDefaults.standard.register(defaults: [enabledKey: true])   // On by default
+        UserDefaults.standard.register(defaults: [enabledKey: true])   // ⌘ + Enter by default
         // Ask macOS to tell us when any app opens or quits. This is not keyboard access.
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification,
@@ -90,7 +95,7 @@ final class Helper: NSObject, NSMenuDelegate {
             _ = AXIsProcessTrustedWithOptions([prompt: true] as CFDictionary)
         }
 
-        // Keyboard hook: only while Claude runs, the swap is On, and we are allowed.
+        // Keyboard hook: only while Claude runs, ⌘ + Enter mode is on, and we are allowed.
         if claudeRunning && enabled && trusted { startTap() } else { stopTap() }
 
         // If the hook should exist but does not (permission missing), check again every 2 s.
@@ -174,44 +179,75 @@ final class Helper: NSObject, NSMenuDelegate {
 
     // MARK: - Menu bar
 
-    /// Makes the menu bar item once, hidden. showMenuBarItem/removeMenuBarItem
-    /// only switch it on and off after that.
+    /// Makes the menu bar item and its menu once, hidden. showMenuBarItem and
+    /// removeMenuBarItem only switch it on and off after that.
     func createMenuBarItem() {
-        if statusItem == nil {
-            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            item.autosaveName = "ClaudeCmdEnterItem"
-            item.isVisible = false
-            let menu = NSMenu()
-            menu.delegate = self
-            menu.autoenablesItems = false
-            toggleItem.target = self
-            permissionItem.isEnabled = false      // this line is information only
-            let settings = NSMenuItem(title: "Open Accessibility Settings…",
-                                      action: #selector(openSettings), keyEquivalent: "")
-            let quit = NSMenuItem(title: "Quit ClaudeCmdEnter",
-                                  action: #selector(quitHelper), keyEquivalent: "")
-            settings.target = self
-            quit.target = self
-            for entry in [toggleItem, .separator(), permissionItem, settings, .separator(), quit] {
-                menu.addItem(entry)
-            }
-            item.menu = menu
-            statusItem = item
+        guard statusItem == nil else { return }
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.autosaveName = "ClaudeCmdEnterItem"
+        item.isVisible = false
+        item.button?.toolTip = "ClaudeCmdEnter"
+
+        let menu = NSMenu()
+        menu.delegate = self
+        menu.autoenablesItems = false
+
+        // "Send key" header (small grey title).
+        let header: NSMenuItem
+        if #available(macOS 14.0, *) {
+            header = NSMenuItem.sectionHeader(title: "Send key")
+        } else {
+            header = NSMenuItem(title: "Send key", action: nil, keyEquivalent: "")
+            header.isEnabled = false
         }
+
+        // The two switches are a pair: turning one on turns the other off.
+        cmdRow = SwitchRow(icon: Icons.glyph(.command, bold: true), italic: "⌘ Command + Enter", rest: " to send",
+                           subtitle: "Enter adds a new line") { [weak self] on in self?.setSwap(on) }
+        enterRow = SwitchRow(icon: Icons.enterArrow(), italic: "Enter", rest: " to send",
+                             subtitle: "Claude's normal keys") { [weak self] on in self?.setSwap(!on) }
+        accessRow = InfoRow(icon: Icons.symbol("accessibility"), label: "Accessibility")
+
+        let settings = NSMenuItem(title: "Open Accessibility Settings…",
+                                  action: #selector(openSettings), keyEquivalent: "")
+        settings.image = Icons.symbol("gearshape")
+        let quit = NSMenuItem(title: "Quit ClaudeCmdEnter",
+                              action: #selector(quitHelper), keyEquivalent: "q")
+        quit.image = Icons.symbol("power")
+        settings.target = self
+        quit.target = self
+
+        let rows = [header, viewItem(cmdRow), viewItem(enterRow), .separator(),
+                    viewItem(accessRow), settings, .separator(), quit]
+        rows.forEach { menu.addItem($0) }
+        item.menu = menu
+        statusItem = item
     }
 
+    private func viewItem(_ view: NSView) -> NSMenuItem {
+        let menuItem = NSMenuItem()
+        menuItem.view = view
+        return menuItem
+    }
+
+    /// Updates the menu bar icon and the menu to match the current state.
     func showMenuBarItem(trusted: Bool) {
         createMenuBarItem()
         let working = tap != nil
-        // Icon:  ⌘↩ = On and working,  ⌘↩ off (grey) = Off,  ⌘↩ ⚠︎ = On but no permission.
-        statusItem?.button?.title = !enabled ? "⌘↩ off" : (working ? "⌘↩" : "⌘↩ ⚠︎")
+        let broken = enabled && trusted && !working       // permission on, but macOS refused the hook
+        // Icon: star in the arrow. Dimmed in "Enter to send" mode.
+        // A small "!" in the star's centre while the permission is missing or not working.
+        // 22 points: about as tall as Claude's own menu bar icon.
+        statusItem?.button?.image = Icons.glyph(.star, warning: !trusted || broken, size: 22)
         statusItem?.button?.appearsDisabled = !enabled
-        toggleItem.title = enabled ? "On: Enter = new line, ⌘Enter = send"
-                                   : "Off: Enter works normally (click to turn On)"
-        toggleItem.state = enabled ? .on : .off
-        permissionItem.title = !trusted ? "Accessibility permission: NOT granted"
-            : (enabled && !working ? "Permission is on but not working: remove it and add it again"
-                                   : "Accessibility permission: granted")
+
+        cmdRow.isOn = enabled
+        enterRow.isOn = !enabled
+        accessRow.iconView.image = Icons.symbol("accessibility")
+        accessRow.iconView.contentTintColor = (trusted && !broken) ? .systemGreen : .tertiaryLabelColor
+        accessRow.statusField.stringValue = !trusted ? "Not granted"
+            : (broken ? "Not working: remove and add it again" : "Granted")
+
         if statusItem?.isVisible == false { statusItem?.isVisible = true }
     }
 
@@ -232,7 +268,8 @@ final class Helper: NSObject, NSMenuDelegate {
     /// Refresh the texts each time the menu is opened (the permission may have changed).
     func menuNeedsUpdate(_ menu: NSMenu) { refresh() }
 
-    @objc func toggleSwap() { enabled.toggle(); refresh() }
+    /// true = "⌘ Command + Enter to send", false = "Enter to send".
+    func setSwap(_ on: Bool) { enabled = on; refresh() }
     @objc func openSettings() { NSWorkspace.shared.open(accessibilityPane) }
     @objc func quitHelper() { stopTap(); NSApp.terminate(nil) }
 }

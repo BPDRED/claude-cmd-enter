@@ -1,4 +1,6 @@
-# ClaudeCmdEnter
+# ClaudeCmdEnter: full install guide
+
+The detailed guide. For the short version, see the [README](../README.md).
 
 A very small helper for the Claude desktop app on Mac.
 
@@ -13,12 +15,15 @@ It works only inside Claude. In every other app, Enter works as usual.
 Tip: because Cmd+Enter becomes a "real" Enter, use **Cmd+Enter** anywhere in
 Claude where you need a normal Enter (for example to confirm a dialog).
 
-## What is in this folder
+## What is in this project
 
 | File | What it is |
 |---|---|
-| `main.swift` | The whole program (about 220 lines, with comments) |
-| `Info.plist` | The app's name and settings (no Dock icon) |
+| `Sources/main.swift` | The program: watching for Claude, the keyboard hook, the menu |
+| `Sources/Icons.swift` | The menu bar and menu icons, drawn in code |
+| `Sources/MenuRows.swift` | The two switch rows and the Accessibility row of the menu |
+| `Resources/Info.plist` | The app's name and settings (no Dock icon) |
+| `tools/make_icon.swift` | Draws the app icon when you build (not part of the running app) |
 | `build.sh` | Builds the app for Intel and Apple Silicon Macs |
 | `install.sh` | Builds, installs, and makes it start at login |
 | `uninstall.sh` | Removes it |
@@ -30,7 +35,7 @@ You need Apple's Command Line Tools (free). If you do not have them, run
 
 ### The easy way
 
-Open Terminal, go to this folder, and run:
+Open Terminal, go to the project folder (the one with `install.sh`), and run:
 
 ```bash
 ./install.sh
@@ -100,24 +105,30 @@ then add it again (step 3) and turn it ON.
 
 The item appears only while Claude is open. It goes away when you quit Claude.
 
+The icon is the star inside a circular arrow.
+
 | You see | Meaning |
 |---|---|
-| `⌘↩` | On and working |
-| `⌘↩ off` (grey) | Off. Enter works normally in Claude |
-| `⌘↩ ⚠︎` | On, but the Accessibility permission is missing |
+| Star in the arrow | ⌘ Command + Enter sends, Enter adds a new line |
+| The same, dimmed (grey) | Enter sends, the normal way |
+| A small **!** in the centre of the star | The Accessibility permission is missing (or not working) |
 
 Click it to open the menu:
 
-- **On / Off** – click to switch. Your choice is remembered.
-- **Accessibility permission: …** – shows if the permission is granted.
+- **⌘ Command + Enter to send** (switch) – Enter adds a new line.
+- **Enter to send** (switch) – Claude's normal keys.
+  The two switches are a pair: turning one on turns the other off.
+  Your choice is remembered.
+- **Accessibility** – the icon is green when the permission is granted,
+  grey when it is missing.
 - **Open Accessibility Settings…** – opens the right page in System Settings.
-- **Quit ClaudeCmdEnter** – stops the helper until your next login.
+- **Quit ClaudeCmdEnter** (⌘Q) – stops the helper until your next login.
 
-When it is **Off**, the helper has no keyboard access at all.
+With **Enter to send** on, the helper has no keyboard access at all.
 
 ## What the app can and cannot see
 
-While Claude is running and the swap is On, macOS gives the helper every key
+While Claude is running and **⌘ Command + Enter to send** is on, macOS gives the helper every key
 press, in any app. This is how macOS works: a helper cannot ask for "only
 Enter" or "only Claude". So here is exactly what the code does with it:
 
@@ -130,12 +141,13 @@ What it does **not** do:
 
 - No network: there is no network code in the program.
 - No key logging: no key is ever stored or printed.
-- No files: it saves only one setting, On or Off.
+- No files: it saves only one setting, which send key you chose.
 - It does not change `Claude.app`.
-- It has no keyboard access when Claude is closed, or when the swap is Off.
+- It has no keyboard access when Claude is closed, or when **Enter to send** is on.
 - It cannot see passwords: macOS hides password fields from programs like this.
 
-You can check all of this yourself: everything is in `main.swift`.
+You can check all of this yourself: the keyboard code is in `Sources/main.swift`
+(`handle`). The other files only draw icons and the menu.
 
 The helper writes a few status lines to the macOS system log, such as
 "keyboard hook started". They never contain keys.
@@ -158,7 +170,7 @@ Optional clean-up:
   tccutil reset Accessibility local.claudecmdenter
   ```
 
-- To delete the saved On/Off setting:
+- To delete the saved send-key setting:
 
   ```bash
   defaults delete local.claudecmdenter
@@ -166,7 +178,7 @@ Optional clean-up:
 
 ## Troubleshooting
 
-**The permission is ON but nothing happens (or the icon shows `⌘↩ ⚠︎`).**
+**The permission is ON but nothing happens (or the icon shows a small `!` in the star).**
 Remove ClaudeCmdEnter from the Accessibility list with **–**, add it again
 with **+** (see Permission, step 3), and turn it ON. This is usually needed
 after a rebuild.
@@ -190,10 +202,10 @@ On a MacBook with a notch, a full menu bar can also hide items. Close some
 other menu bar apps to check.
 
 **Enter does nothing in a Claude dialog or button.**
-Press **Cmd+Enter** there (it arrives as a normal Enter), or switch the swap Off.
+Press **Cmd+Enter** there (it arrives as a normal Enter), or turn on **Enter to send**.
 
 **I want to remove the permission.**
-First choose **Off** or **Quit** in the menu, then remove it in System Settings.
+First turn on **Enter to send** or choose **Quit** in the menu, then remove it in System Settings.
 
 **Is it running?**
 

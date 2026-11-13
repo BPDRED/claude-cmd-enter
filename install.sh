@@ -22,6 +22,10 @@ while launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; do sleep 0.2; done
 mkdir -p "$HOME/Applications" "$HOME/Library/LaunchAgents"
 rm -rf "$APP"
 cp -R "build/$NAME.app" "$APP"
+# Tell macOS about the new copy, so Finder and System Settings show the new
+# icon instead of an old cached one.
+touch "$APP"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" || true
 
 # Start-at-login file. RunAtLoad = start at login. There is no KeepAlive,
 # so "Quit" in the menu really quits (until the next login).
@@ -44,7 +48,9 @@ cat > "$PLIST" <<EOF
     <key>LimitLoadToSessionType</key>
     <string>Aqua</string>
     <key>AssociatedBundleIdentifiers</key>
-    <string>$LABEL</string>
+    <array>
+        <string>$LABEL</string>
+    </array>
 </dict>
 </plist>
 EOF
